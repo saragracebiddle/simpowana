@@ -1,0 +1,603 @@
+---
+title: "Preliminary Power Analysis"
+author: "Sara Biddle"
+date: "`r Sys.Date()`"
+bibliography: nirs.bib
+output:
+  pdf_document: default
+---
+
+```{r setup, echo = FALSE, message  = FALSE, output = FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+library(tidyverse)
+library(data.table)
+library("kableExtra")
+library(simpowana)
+```
+
+## Introduction
+
+Longitudinal data collection poses unique challenges to data analysis, particularly for conducting a power analysis. Participant drop out and possible different measurement frequencies and different lengths of time between measurements cause a violation of assumptions of traditional or more well known data analysis, such as a repeated measures ANOVA. Mixed effects models are becoming increasingly popular for use in longitudinal studies for these reasons. However, the flexibility of the mixed effects model causes difficulties when conducting a power analysis, as there is not a formula to use. Most sources recommend conducting a power analysis for a mixed effects model using simulations, which is the process conducted below [@kumle]; [@guo]; [@debruine].
+
+When preparing for simulation, we must carefully construct assumptions about our data. Since data about muscle oxygenation kinetics measured by NIRS in breast and gynecological cancer patients is limited, we have conducted a thorough literature review in order to approximate the necessary values. 
+
+## Study Design
+
+Breast and primary gynecological cancer patients without distant metastasis undergoing standard of care chemotherapy are eligible for recruitment into the study. Prior to beginning chemotherapy, participants do a submaximal lactate threshold test on a cycle ergometer to determine a wattage corresponding to an approximately moderately difficult exercise intensity that elicits a change in blood lactate levels. After the lactate threshold test, patients perform square wave cycling above the lactate threshold separated by rest. Muscle oxygen kinetics are measured by the Portamon by Artinis Medical Systems, a continuous wave near infrared spectroscopy device. Muscle oxygenation recovery kinetics are modeled using a monoexponential regression. After beginning chemotherapy treatment, patients complete one square wave cycling session for each cycle of chemotherapy they receive. Therefore, a patient who receives $n$ cycles of chemotherapy will complete $n+1$ square wave cycling sessions, as they perform one session prior to beginning chemotherapy. Due to differences in chemotherapy regimens, each cycle can be between one and four weeks long, and the length of treatment can be between three and twelve cycles. 
+
+```{r}
+timeline <- data.table(time = c(0,4,5, 14, 15, 24),
+                       event = c("Lactate\nThreshold",
+                                 "Square Wave\nKinetics 0",
+                                 "Chemotherapy\nCycle 1",
+                                 "Square Wave\nKinetics 1",
+                                 "Chemotherapy\nCycle n",
+                                 "Square Wave\nKinetics n"),
+                       type = c("Testing",
+                                "Testing",
+                                "Chemo",
+                                "Testing",
+                                "Chemo",
+                                "Testing"),
+                       positions = c(1.0,0.5, -0.5,0.5,-0.5, 0.5))
+
+ggplot(timeline, aes(x = time, y = positions, color = type, label = event))+
+  geom_point()+
+  geom_segment(arrow = arrow(),
+               y = 0, yend = 0, x = -5, xend = 33,
+               color = "black")+
+  geom_label(vjust = "outward",)+
+  geom_segment(aes(xend = time, yend = 0))+
+  theme_minimal()+
+  scale_x_continuous(limits = c(-5, 33),
+                     breaks = NULL,
+                     name = element_text("Time"))+
+  scale_y_continuous(breaks = NULL,
+                     name = NULL,
+                     limits = c(-0.7, 1.2))+
+  guides(color = FALSE)
+
+```
+
+
+## Building the Model
+
+We begin with constructing a maximal model, which is considered best practice [@cheng]. Terms can always be removed from a maximal model later in analysis, but conducting power analysis on a model that is not maximal can result in incorrect power and effect size estimates [@cheng].
+
+We expect for individuals to have different baseline $\tau$ measurements, therefore our model should include a random intercept for $\tau$ at baseline. We expect to find an average trend of increasing $\tau$ throughout chemotherapy and we predict that this will be an approximately linear trend. We expect that individual change in $\tau$ over time will vary from the average change in $\tau$ over time, therefore the model will include a random slope term. 
+
+Therefore, we begin with a model of the form
+
+\[ Y_i = B_0 + B_1 X_i + \gamma_{io} + \gamma_{i1} X_i + \epsilon_i\]
+
+where $Y_i$ is the predicted $\tau$ of individual $i$, $B_0$ is the grand mean $\tau$ for our population, $B_1$ is the average change in $\tau$ over time, $\gamma_{io}$ is how much the individual's $\tau$ differs from the grand mean, $\gamma_{i1}$ is how much the individual's change in $\tau$ differs from the average change in $\tau$ over time, $\epsilon_i$ is the error that cannot be explained by the model, and $X_i$ is the time point. 
+
+
+## Assumptions
+
+In order to simulate data, we must know or make assumptions about several variables. 
+
+1. $B_0$
+
+We must assume an average grand mean $\tau$ value. NIRS measurements vary according to age, therefore we looked for NIRS measurements on participants of a similar age to our predicted patient population [@chung].  The patient population from Niemeijer, et al. had an average age of 64 $\pm$ 9 years, which is similar to what we expect from our patient population of breast and gynecological patients [@niemeijerchf]. This study used the same NIRS device (Portamon, Artinis Medical Systems), on the same muscle (vastus lateralis), and measured $\tau$ during a recovery from cycling on a stationary bike. Therefore, we will use the average $\tau$ measured in chronic heart failure patients as our $B_0$ : 25.35 seconds [@niemeijerchf]. 
+
+2. $\gamma_{i0}$
+
+In order to simulate individual $\tau$ values at baseline, we must know how individual $\tau$ varies from $B_0$, on average. 
+
+Most literature assumes that muscle oxygenation kinetics ($\tau$) is a normally distributed random variable. However, careful analysis reveals that this assumption of normality does not hold for $\tau$. $\tau$ values are calculated from an asymptotic (or monoexponential) regression of oxygenation levels over time. It is not possible to obtain a negative $\tau$ value. This limits $\tau$ values to the positive real numbers. 
+
+Some studies have reported mean and standard deviations of $\tau$ values that result in 95% confidence intervals for $\tau$ that extend into the negative. Either the reported standard deviations are larger than the population standard deviation by a large amount, or $\tau$ is not a normally distributed random variable. Niemeijer reports a $\tau_{TSI}$ of 22.6 $\pm$ 14.6 and 28.1 $\pm$ 23.2 for measurements on two different days [@niemeijerchf]. The figure below demonstrates the density curves for $\tau$ values based on these mean and standard deviations. Both curves show values below zero as possible $\tau$ values, which is not possible. 
+
+```{r}
+mean1 <- 22.6
+sd1 <- 14.6
+mean2 <- 28.1
+sd2 <- 23.2
+x <- seq(-50, 100, by =1)
+
+curve1 <- dnorm(x, mean = mean1, sd = sd1)
+curve2 <- dnorm(x, mean = mean2, sd = sd2)
+
+normcurves <- cbind(x, curve1, curve2) |> as.data.frame()
+```
+
+```{r, fig = T, fig.dim = c(6,3)}
+ggplot(normcurves, aes(x = x))+
+  geom_line(aes(y = curve1), color = 'red')+
+  geom_line(aes(y = curve2), color = 'blue')+
+  geom_vline(xintercept = 0)+
+  theme_bw()+
+  ggtitle('Normal Distribution of Tau based on Niejeimer et al. 2017')+
+  labs(x = 'Tau (s)', y = 'Density')
+```
+
+
+We propose that $\tau$ is a Gamma distributed random variable.
+A Gamma distributed random variable has a right skewed distribution of positive numbers. A random variable $X$ follows $\Gamma (\alpha , \lambda)$ where $E(X) =\dfrac{\alpha}{\lambda}$ and $V(X) = \dfrac{\alpha}{\lambda^2}$. We assume that the expected value of this distribution is equal to the mean $\tau$ of our population, previously defined as $B_0$ = 25.35 seconds.  
+Using the mean and standard deviation values above, we expect for $\tau$ to follow a Gamma distribution with shape of 1.57 and Expected Value 12.5 with a right shift of 13.35 to bring the expected value to 25.35, the grand mean $\tau$.These values are estimates and future research may elucidate better estimates of the parameters for this distribution.  Probability and density curves of this distribution are displayed below.
+
+```{r}
+library(patchwork)
+shape = 1.57
+scale = 12.5
+shift = (25.35 - 12.5)
+
+x = seq(0,120, by = 1)
+
+gammacurve <- cbind(dgamma(x = x, shape = shape, scale = scale),x + shift) |> as.data.frame()
+
+
+expect = 25.35
+var = 375.7
+lambda = expect/var
+alpha = lambda*expect
+gammacurve2 <- cbind(dgamma(x = x, shape = alpha, rate = lambda), x) |> as.data.frame()
+
+plot.1 <- ggplot(gammacurve, aes(x = V2, y = V1))+
+  geom_line()+
+  theme_bw() +
+  labs(x = 'Tau (s)', y = 'Density', title = 'Gamma Distribution',
+                                              subtitle = 'shape = 1.57, scale = 12.5, shift = 12.85')+
+  scale_x_continuous(limits = c(0,120), breaks = c(0,30,60,90,120))
+
+gammaprobs <- cbind(pgamma(x, shape = shape, scale = scale), x+shift) |> as.data.frame()
+
+plot.2 <- ggplot(gammaprobs, aes(x = V2, y = V1))+
+  geom_line()+
+  theme_bw()+
+  labs(x = 'Tau (s)', y = 'Probability', title = 'Gamma Distribution',
+       subtitle = 'shape = 1.57, scale = 12.5, shift = 12.85')+
+  scale_x_continuous(limits = c(0,120), breaks = c(0,30,60,90,120))
+```
+
+```{r, fig = T, fig.dim = c(8,3)}
+plot.1 + plot.2
+```
+
+3. $B_1$
+
+We need to determine how we expect $\tau$ to change throughout chemotherapy. However, this information is not readily available from any literature, therefore we chose to use change in $VO_{2 peak}$ as an approximation for how $\tau$ can be expected to change, and convert from $VO_{2 peak}$ to $\tau$. Foulkes, et al. (2019) measured how $VO_{2 peak}$ changed throughout anthracycline chemotherapy in $n=8$ patients undergoing standard of care treatment [@foulkes]. Foulkes measured $VO_{2 peak}$ before (22.4 $\pm$ 6.8 mL/kg/min) and after anthracycline chemotherapy and measured the change in $VO_{2 peak}$ as -4.0 $\pm$ 1.02 mL/kg/min. Therefore, on average, $VO_{2 peak}$ decreased from 22.4 to 18.4 mL/kg/min.  Beever, et al. (2020) measured $VO_{2 max}$ and $\tau$ using the Portamon during recovery from cycling on the vastus lateralis and found $VO_{2 max}$ (mL/kg LBM /min) = -0.58($\tau$)+68.1 [@beever]. In order to use this equation to predict a change in $\tau$, we converted Foulkes, et al. relative $VO_{2 peak}$ into absolute $VO_{2}$ by multiplying by the average body weight recorded for the participants (73.1 kg) [@foulkes]. Then, we converted absolute $VO_2$ into $VO_2$ corrected for lean body mass. We assumed that the participants in Foulkes, et al. had approximately the same lean body mass as the participants in Beever, et al. (45.1 kg). Therefore, we found that $\tau$, predicted from Foulkes and Beever, could be expected to increase from 54.84 seconds to 64.83 seconds, for a change from pre-anthracycline to post-anthracycline of 9.99 seconds. 
+
+This 9.99 seconds is for overall change from pre- to post-treatment. Our model takes into account each cycle of chemotherapy treatment, therefore we expect for $\tau$ to change by $\dfrac{9.99}{n}$ where $n$ is the number of chemotherapy treatments the individual undergoes. 
+
+4.  $\gamma_{i1}$
+
+Now, we must determine how we expect an individual's change in $\tau$ to vary from $B_1$. We use the standard deviation of change in $VO_{2 peak}$ (1.02) from Foulkes and the equation from Beever to estimate the standard deviation in change in $\tau$ over time as 2.55 s. 
+
+5. $\epsilon_i$
+
+It is recommended to set $\epsilon$ as twice the standard deviation of $\gamma_{i0}$ [@debruine]. However, since we determined that $\gamma_{i0}$ is not a normally distributed variable, we cannot use a standard deviation in this instance. 
+
+We chose to use the standard deviation of how $\tau$ varies between measurements on different days, as this measurement error will cause random changes in measured $\tau$ values on the same person in the same location ($\sigma = 5.54$) [@niemeijerchf].
+
+6. $X_i$
+
+In this simulation, we choose to assume that each patient has 10 data points: one pre-treatment and nine during treatment, each corresponding to one cycle of chemotherapy infusions. Depending on the type of chemotherapy and how well the patient tolerates the treatment, the number of cycles undergone will differ in reality. 
+
+## Simulated Data
+
+```{r}
+
+set.seed(8888888)
+
+params <- crossing(
+  rep = 1,
+  n_subj     = 20, # number of subjects
+  n_cycles   = 10, # number of chemo cycles
+  beta_0     = 25.35, # grand mean
+  beta_1     = 0.99, # effect of chemo cycle on tau
+  tau_1      =  2.55, # by-subject random slope sd
+  rho        = 0.2, # correlation between intercept and slope
+  sigma      = 5.54,  # residual (standard deviation)
+  gammashape = 1.57, #shape of gamma distribution
+  gammascale = 12.5 # expected value of gamma distribution
+) |> setDT() 
+
+params <- params[, ID := 1:nrow(params)]
+
+# create data simulation function that creates random data from parameters
+datasim <- function(paramsvec){
+  # list of time points
+  X_i = seq(1, paramsvec$n_cycles, by = 1)-1
+  
+  # randomly sample T_1 for each participant from a normal distribution with 
+  # sd=tau_1 and correlation = rho
+  subjs <- faux::rnorm_multi(
+    n = paramsvec$n_subj, 
+    mu = 0, # means for random effects are always 0
+    sd = paramsvec$tau_1, # set SDs
+    r = paramsvec$rho, # set correlation, see ?rnorm_multi
+    varnames = c("T_1s")
+  ) %>%setDT()
+  
+  # add new columns to data table subjs
+  subjs <- subjs[, `:=` (subj_id = seq_len(paramsvec$n_subj), #add id for subject
+                         T_0s = rgamma(paramsvec$n_subj, # randomly sample n points from gamma distribution 
+                                       shape = paramsvec$gammashape,
+                                       scale = paramsvec$gammascale) + 
+                           (paramsvec$beta_0 - paramsvec$gammascale) - paramsvec$beta_0) # and recenter on appropriate expected value
+                 ]
+  
+  # cross subjects and time points to create data table where each subject has n_cycles time points
+  trials <- crossing(subjs, X_i) |> setDT() 
+  
+  # create error term by randomly sampling from normal distribution with sd=sigma
+  # and create tau values for each participant at each time point
+  # from randomly sampled values based on set parameters
+  # save parameters on same data table
+  trials[, `:=` (e_si = rnorm(nrow(trials), mean = 0, sd = paramsvec$sigma))
+  ][,`:=`(TSITau = paramsvec$beta_0 + T_0s + (paramsvec$beta_1 + T_1s) * X_i + e_si)
+  ][,`:=` (beta_0 = paramsvec$beta_0,                                                     
+            beta_1 = paramsvec$beta_1,                                              
+            n_subj = paramsvec$n_subj,                                               
+            n_cycles = paramsvec$n_cycles,
+            tau_1 = paramsvec$tau_1,                                                    
+            rho = paramsvec$rho,                                                      
+            sigma = paramsvec$sigma,                                                 
+            gammashape = paramsvec$gammashape,                                                       
+            gammascale = paramsvec$gammascale,
+            rep = paramsvec$rep)]
+  
+  # append the results to a file if temp is set
+  if (!is.null("prelimexample.csv")) {
+    append <- file.exists("prelimexample.csv") # append if the file exists
+    write_csv(trials, "prelimexample.csv", append = append)
+  }
+  
+}
+
+# run datasim function on each subset of data by ID (run on each row)
+params <- params[,datasim(.SD), by = ID]
+
+# read data in from saved csv
+sims1 <- read_csv("prelimexample.csv",show_col_types = FALSE) |> setDT()
+```
+
+```{r, fig = T, fig.dim = c(8,4)}
+ggplot(sims1,aes(x = X_i, y = TSITau))+
+  geom_line(aes(color = as.character(subj_id)))+
+  ggtitle('Example of One Simulated Data Set of 20 Participants')+
+  labs(x = 'Chemotherapy Cycle', y = 'Tau (s)')+
+  scale_x_continuous(limits = c(0,9), breaks = c(0,3,6,9))+
+  theme_bw()
+```
+
+The data simulation using the parameters set above results in simulated negative tau values, which are not possible in real life. Now we explore how changes in various parameters effect our simulated data. 
+
+First, we begin by changing the data simulation function to set the seed at the same integer for every data set. This allows us to compare how changes in parameters will effect the simulated data as the randomly generated components will be the same after every seed reset. 
+
+Now, we will observe how differences in effect size change the data. We will compare using the following values of $B_1$: $0.1, 1.0, 5.0, 10.0$. 
+
+```{r}
+# create data simulation function that creates random data from parameters
+datasimseedset <- function(paramsvec, filename){
+  # list of time points
+  set.seed(8888888)
+  X_i = seq(1, paramsvec$n_cycles, by = 1)-1
+  # beta_1 <- 9.99/paramsvec$n_cycles
+  
+  # randomly sample T_1 for each participant from a normal distribution with 
+  # sd=tau_1 and correlation = rho
+  subjs <- faux::rnorm_multi(
+    n = paramsvec$n_subj, 
+    mu = 0, # means for random effects are always 0
+    sd = paramsvec$tau_1, # set SDs
+    r = paramsvec$rho, # set correlation, see ?rnorm_multi
+    varnames = c("T_1s")
+  ) |> setDT()
+  
+  # add new columns to data table subjs
+  subjs <- subjs[, `:=` (subj_id = seq_len(paramsvec$n_subj), #add id for subject
+                         T_0s = rgamma(paramsvec$n_subj, # randomly sample n points from gamma distribution 
+                                       shape = paramsvec$gammashape,
+                                       scale = paramsvec$gammascale) + 
+                           (paramsvec$beta_0 - paramsvec$gammascale) - paramsvec$beta_0) # and recenter on appropriate expected value
+  ]
+  
+  # cross subjects and time points to create data table where each subject has n_cycles time points
+  trials <- crossing(subjs, X_i)|> setDT() 
+  
+  # create error term by randomly sampling from normal distribution with sd=sigma
+  # and create tau values for each participant at each time point
+  # from randomly sampled values based on set parameters
+  # save parameters on same data table
+  trials[, `:=` (e_si = rnorm(nrow(trials), mean = 0, sd = paramsvec$sigma))
+  ][,`:=`(TSITau = paramsvec$beta_0 + T_0s + (paramsvec$beta_1 + T_1s) * X_i + e_si)
+  ][,`:=` (beta_0 = paramsvec$beta_0,                                                     
+           beta_1 = paramsvec$beta_1,                                              
+           n_subj = paramsvec$n_subj,                                               
+           n_cycles = paramsvec$n_cycles,
+           tau_1 = paramsvec$tau_1,                                                    
+           rho = paramsvec$rho,                                                      
+           sigma = paramsvec$sigma,                                                 
+           gammashape = paramsvec$gammashape,                                                       
+           gammascale = paramsvec$gammascale,
+           rep = paramsvec$rep)]
+  
+  # append the results to a file if temp is set
+  if (!is.null(filename)) {
+    append <- file.exists(filename) # append if the file exists
+    write_csv(trials, filename, append = append)
+  }
+}
+```
+
+```{r}
+params <- crossing(
+  rep = 1,
+  n_subj     = 20, # number of subjects
+  n_cycles   = 10, # number of chemo cycles
+  beta_0     = 25.35, # grand mean
+  beta_1     = c(0.1,1.0,5.0,10.0), # effect of chemo cycle on tau
+  tau_1      =  2.55, # by-subject random slope sd
+  rho        = 0.2, # correlation between intercept and slope
+  sigma      = 5.54,  # residual (standard deviation)
+  gammashape = 1.57, #shape of gamma distribution
+  gammascale = 12.5 # expected value of gamma distribution
+) |> setDT() 
+
+params <- params[, ID := 1:nrow(params)]
+
+# run datasim function on each subset of data by ID (run on each row)
+params <- params[,datasimseedset(.SD, "prelimbeta1s.csv"), by = ID]
+
+# read data in from saved csv
+beta1sets <- read_csv("prelimbeta1s.csv",show_col_types = FALSE) |> setDT()
+```
+
+```{r, fig=T, fig.dim = c(8,6)}
+ggplot(beta1sets,aes(x = X_i, y = TSITau))+
+  facet_wrap(~beta_1, ncol = 2)+
+  geom_line(aes(color = as.character(subj_id)))+
+  labs(x = 'Chemotherapy Cycle', y = 'Tau (s)', title = 'Simulated Data Sets with Different Values of B_1')+
+  scale_x_continuous(limits = c(0,9), breaks = c(0,3,6,9))+
+  theme_bw()
+```
+
+
+Larger $B_1$ values result in steeper overall changes in $\tau$ throughout chemotherapy. 
+
+
+```{r}
+params <- crossing(
+  rep = 1,
+  n_subj     = 20, # number of subjects
+  n_cycles   = 10, # number of chemo cycles
+  beta_0     = 25.35, # grand mean
+  beta_1     = 0.99, # effect of chemo cycle on tau
+  tau_1      = c(0.1,2.5,5.0), # by-subject random slope sd
+  rho        = 0.2, # correlation between intercept and slope
+  sigma      = 5.54,  # residual (standard deviation)
+  gammashape = 1.57, #shape of gamma distribution
+  gammascale = 12.5 # expected value of gamma distribution
+) |> setDT() 
+
+params <- params[, ID := 1:nrow(params)]
+
+# run datasim function on each subset of data by ID (run on each row)
+params <- params[,datasimseedset(.SD, "prelimtau1s.csv"), by = ID]
+
+# read data in from saved csv
+beta1sets <- read_csv("prelimtau1s.csv",show_col_types = FALSE) |> setDT()
+```
+
+Now, we explore how various $T_i1$ values effect the simulation. Smaller $T_i1$ will result in participants having slopes closer to $B_1$, with larger $T_i1$ creating more spread in individual slopes. 
+
+
+```{r, fig=T, fig.dim = c(8,4)}
+ggplot(beta1sets,aes(x = X_i, y = TSITau))+
+  facet_wrap(~tau_1, ncol = 3)+
+  geom_line(aes(color = as.character(subj_id)))+
+  labs(x = 'Chemotherapy Cycle', y = 'Tau (s)', title = 'Simulated Data Sets with Different Values of T_i1')+
+  scale_x_continuous(limits = c(0,9), breaks = c(0,3,6,9))+
+  theme_bw()
+```
+
+
+```{r}
+params <- crossing(
+  rep = 1,
+  n_subj     = 20, # number of subjects
+  n_cycles   = 10, # number of chemo cycles
+  beta_0     = 25.35, # grand mean
+  beta_1     = 0.99, # effect of chemo cycle on tau
+  tau_1      = 2.55, # by-subject random slope sd
+  rho        = 0.2, # correlation between intercept and slope
+  sigma      = c(0.1,5.54, 10.0),  # residual (standard deviation)
+  gammashape = 1.57, #shape of gamma distribution
+  gammascale = 12.5 # expected value of gamma distribution
+) |> setDT() 
+
+params <- params[, ID := 1:nrow(params)]
+
+# run datasim function on each subset of data by ID (run on each row)
+params <- params[,datasimseedset(.SD, "prelimsigmas.csv"), by = ID]
+
+# read data in from saved csv
+beta1sets <- read_csv("prelimsigmas.csv",show_col_types = FALSE) |> setDT()
+```
+
+We explore values of $\epsilon$ below. Larger $\epsilon$ results is more variation in individual data points and lower $\epsilon$ results in linear trendlines. 
+
+```{r, fig=T, fig.dim = c(8,4)}
+ggplot(beta1sets,aes(x = X_i, y = TSITau))+
+  facet_wrap(~sigma, ncol = 3)+
+  geom_line(aes(color = as.character(subj_id)))+
+  labs(x = 'Chemotherapy Cycle', y = 'Tau (s)', title = 'Simulated Data Sets with Different Values of Sigma')+
+  scale_x_continuous(limits = c(0,9), breaks = c(0,3,6,9))+
+  theme_bw()
+```
+
+```{r}
+params <- crossing(
+  rep = 1,
+  n_subj     = 20, # number of subjects
+  n_cycles   = 10, # number of chemo cycles
+  beta_0     = 25.35, # grand mean
+  beta_1     = 0.99, # effect of chemo cycle on tau
+  tau_1      = 2.55, # by-subject random slope sd
+  rho        = 0.2, # correlation between intercept and slope
+  sigma      = 5.54,  # residual (standard deviation)
+  gammashape = 1.57, #shape of gamma distribution
+  gammascale = c(0, 12.5, 25) # expected value of gamma distribution
+) |> setDT() 
+
+params <- params[, ID := 1:nrow(params)]
+
+# run datasim function on each subset of data by ID (run on each row)
+params <- params[,datasimseedset(.SD, "prelimgammascales.csv"), by = ID]
+
+# read data in from saved csv
+beta1sets <- read_csv("prelimgammascales.csv",show_col_types = FALSE) |> setDT()
+```
+
+We explore how different Gamma distrbution spreads would effect the simulations. A Gamma distribution with smaller scale value has less spread over baseline tau values and a Gamma distribution with larger scale values has greater spread over baseline tau values. 
+
+
+```{r, fig=T, fig.dim = c(8,4)}
+ggplot(beta1sets,aes(x = X_i, y = TSITau))+
+  facet_wrap(~gammascale, ncol = 3)+
+  geom_line(aes(color = as.character(subj_id)))+
+  labs(x = 'Chemotherapy Cycle', y = 'Tau (s)', title = 'Simulated Data Sets with Different Gamma Distributions')+
+  scale_x_continuous(limits = c(0,9), breaks = c(0,3,6,9))+
+  theme_bw()
+```
+
+
+
+
+## Power
+
+Below, we see how various parameters affect the predicted power of our model. All models were run 5000 times. We begin with number of patients and $\gamma_1$ values. 
+
+```{r}
+alpha = 0.05
+
+power<- nsubj_results[(effect == 'fixed' & term == 'X_i'),  .(mean_estimate = mean(estimate),
+                                                 mean_se = mean(std.error),
+                                                 power = mean(p.value < alpha)), by = .(tau_1, n_subj)]
+```
+
+```{r}
+powerByTau1AndN <- ggplot(power, aes(x = n_subj, y = power))+
+  geom_point(aes(shape = as.factor(tau_1)))+
+  geom_line(aes(color = as.factor(tau_1)))+
+  geom_hline(yintercept = 0.8)+
+  theme_bw()+
+  labs(title = 'Power by Number of Subjects and T1 Values',
+       x = "Number of Subjects",
+       y = 'Power',
+       color = 'T1',
+       shape = 'T1')
+
+powerByTau1AndN
+```
+
+In the graph and table above, we see that relatively small changes in $\gamma_1$ values results in large differences in estimated power. 
+
+Next, we view how different $B_1$ values effect power of our model. 
+
+```{r, echo = FALSE, message = FALSE}
+power |> dcast(as.factor(n_subj) ~ as.factor(tau_1)) |> kable(booktabs = T, 
+                                                                digits = 3, 
+                                                                col.names = c('N | T_1','1.25','1.5','1.75','2.0','2.25','2.5'), caption = 'Power by Number of Subjects and T1') 
+```
+
+
+```{r}
+alpha = 0.05
+
+power<- bybeta_results[(effect == 'fixed' & term == 'X_i'),  .(mean_estimate = mean(estimate),
+                                                        mean_se = mean(std.error),
+                                                        power = mean(p.value < alpha)), by = .(beta_1, n_subj)]
+
+powerByBeta1AndN <- ggplot(power, aes(x = n_subj, y = power))+
+  geom_point(aes(shape = as.factor(beta_1)))+
+  geom_line(aes(color = as.factor(beta_1)))+
+  geom_hline(yintercept = 0.8)+
+  theme_bw()+
+  labs(title = "Power by Number of Subejcts and Beta_1 Values",
+       x = 'Number of Subjects',
+       y = 'Power',
+       color = 'B_1',
+       shape = 'B_1')
+powerByBeta1AndN
+```
+
+```{r, echo = FALSE, message = FALSE}
+power |> dcast(as.factor(n_subj) ~ as.factor(beta_1)) |> kable(booktabs = T, 
+                                                                digits = 3, 
+                                                                col.names = c('N | B_1','0.5','0.99','1.5','2.0'), caption = 'Power by Number of Subjects and $B_1$')
+```
+
+
+Data sets with larger $B_1$ have more powerful models than smaller $B_1$. 
+
+Next, we explore how various lengths of treatment may effect power. 
+
+We first assume that $B_1$ is held constant for all treatment lengths, or that each cycle of chemotherapy has the same effect on $\tau$. 
+
+```{r, echo = FALSE, messge = FALSE}
+alpha = 0.05
+
+power<- bycycles_results[(effect == 'fixed' & term == 'X_i'),  .(mean_estimate = mean(estimate),
+                                                        mean_se = mean(std.error),
+                                                        power = mean(p.value < alpha)), by = .(n_cycles, n_subj)]
+
+powerByTau1AndN <- ggplot(power, aes(x = n_subj, y = power))+
+  geom_point(aes(shape = as.factor(n_cycles)))+
+  geom_line(aes(color = as.factor(n_cycles)))+
+  geom_hline(yintercept = 0.8)+
+  theme_bw()+
+  labs(title = "Power by Number of Subejcts and Number of Data Points for Each Subject",
+       subtitle = 'Where Beta_1 is held constant at 0.99',
+       x = 'Number of Subjects',
+       y = 'Power',
+       color = 'Data Points',
+       shape = 'Data Points')
+powerByTau1AndN
+```
+
+```{r, echo = FALSE, message = FALSE}
+power |> dcast(as.factor(n_subj) ~ as.factor(n_cycles)) |> kable(booktabs = T, 
+                                                                digits = 3, 
+                                                                col.names = c('N | X','3','5','7','10'), caption = 'Power by Number of Subjects and Number of Data Points where $B_1$ = 0.99')
+```
+
+Under this assumption, we observe that the model is less powerful with fewer data points. 
+
+Next, we assume that $B_1$ is dependent on chemotherapy length, or that the overall change from pre- to post-chemotherapy is constant no matter how many cycles the patient undergoes. 
+
+```{r}
+alpha = 0.05
+
+power<- bycycles_varyb_results[(effect == 'fixed' & term == 'X_i'),  .(mean_estimate = mean(estimate),
+                                                        mean_se = mean(std.error),
+                                                        power = mean(p.value < alpha)), by = .(n_cycles, n_subj)]
+
+powerByTau1AndN <- ggplot(power, aes(x = n_subj, y = power))+
+  geom_point(aes(shape = as.factor(n_cycles)))+
+  geom_line(aes(color = as.factor(n_cycles)))+
+  geom_hline(yintercept = 0.8)+
+  theme_bw()+
+  labs(title = "Power by Number of Subejcts and Number of Data Points for Each Subject",
+       subtitle = 'Where B_1 varies by number of data points',
+       x = 'Number of Subjects',
+       y = 'Power',
+       color = 'Data Points',
+       shape = 'Data Points')
+powerByTau1AndN
+```
+
+```{r, echo = FALSE, message = FALSE}
+power |> dcast(as.factor(n_subj) ~ as.factor(n_cycles)) |> kable(booktabs = T, 
+                                                                digits = 3, 
+                                                                col.names = c('N | X','3','5','7','10'), caption = 'Power by Number of Subjects and Number of Data Points where $B_1$ = 9.99/$X_i$')
+```
+
+In the graph and table above, observe that the model is more powerful with fewer data points, due to the larger $B_1$ values in the shorter data sets. 
+
+We expect for $B_1$ to interact with length of chemotherapy treatment as observed above, rather than remaining constant despite length of treatment. It is observed that some treatments are more or less difficult for patients to handle, and that the length of treatment is variable dependent on type of chemotherapy and how the patient handles the treatment. We do not expect for most of the participants to undergo 10 or more cycles of chemotherapy. Patients with early stage breast cancer can expect to undergo between three to six months of chemotherapy, which could be anywhere between 3 and 12 cycles of treatment, depending on the treatment prescribed by their oncologist. With $X=7$ data points for each patient, we have a power of 81% with $n=30$ participants. 
+
+Based on how our models perform under various parameters, we are confident that $n=30$ participants will produce significant results. 
